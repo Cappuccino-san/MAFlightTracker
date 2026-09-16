@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+body {
+  background-color: #030712; /* gray-950 */
+  color: white;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Ensure Leaflet map takes full height */
+.leaflet-container {
+  width: 100%;
+  height: 100vh;
+  z-index: 0;
+}
+
+
+
+/* CSS filter to turn standard OSM tiles into a dark theme */
+.map-tiles {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+.custom-popup .leaflet-popup-content-wrapper {
+  background-color: rgba(17, 24, 39, 0.95);
+  backdrop-filter: blur(8px);
+  color: white;
+  border: 1px solid rgba(55, 65, 81, 0.8);
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+}
+
+.custom-popup .leaflet-popup-tip {
+  background-color: rgba(17, 24, 39, 0.95);
+  border: 1px solid rgba(55, 65, 81, 0.8);
+}
+
+.custom-popup .border-gray-200 {
+  border-color: rgba(55, 65, 81, 0.8);
+}
+
+.custom-popup .bg-gray-50 {
+  background-color: rgba(31, 41, 55, 0.6);
+  border-color: rgba(55, 65, 81, 0.8);
+}
+
+.custom-popup .text-gray-900,
+.custom-popup .text-gray-700 {
+  color: rgba(243, 244, 246, 1);
+}
+
+/* Custom Webkit Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.5);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 114, 128, 0.8);
+}
