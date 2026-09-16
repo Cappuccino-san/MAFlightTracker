@@ -129,7 +129,11 @@ def parse_states(states: list) -> list:
 trail_cache = {}
 
 async def poll_opensky():
-    async with httpx.AsyncClient() as client:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+    async with httpx.AsyncClient(headers=headers) as client:
         while True:
             if manager.active_connections:
                 try:
