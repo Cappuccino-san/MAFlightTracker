@@ -13,14 +13,9 @@ app = FastAPI(title="Live Flight Tracker API")
 OPENSKY_USERNAME = os.environ.get("OPENSKY_USERNAME")
 OPENSKY_PASSWORD = os.environ.get("OPENSKY_PASSWORD")
 
-OPENSKY_URL = "https://opensky-network.org/api/states/all"
+OPENSKY_URL = "https://api.adsb.lol/v2/point/42.36/-71.05/100"
 # Bounding box for Massachusetts (including Martha's Vineyard and Nantucket)
-PARAMS = {
-    "lamin": 41.20,
-    "lamax": 42.90,
-    "lomin": -73.55,
-    "lomax": -69.90
-}
+PARAMS = {}
 POLL_INTERVAL = 10  # Seconds
 
 # Store active websocket connections
@@ -81,70 +76,68 @@ async def fetch_metadata(icao: str, callsign: str):
     }
     logger.info(f"Cached metadata for {icao} ({callsign})")
 
-def parse_states(states: List[List]) -> List[dict]:
+def parse_states(states: list) -> list:
     if not states:
         return []
     
     parsed = []
     for s in states:
         try:
-            icao = s[0].strip() if isinstance(s[0], str) else s[0]
-            callsign = s[1].strip() if s[1] and isinstance(s[1], str) else "UNKNOWN"
+            icao = str(s.get("hex", "")).strip()
+            if not icao:
+                continue
+            callsign = str(s.get("flight", "")).strip() or "UNKNOWN"
             
-            # Trigger background metadata fetch if not in cache or if callsign updated
-            meta = metadata_cache.get(icao)
-            needs_fetch = False
+            registration = s.get("r", "N/A")
+            model = s.get("t", "N/A")
             
-            if not meta:
-                needs_fetch = True
-            elif meta.get("callsign_used") == "UNKNOWN" and callsign != "UNKNOWN":
-                needs_fetch = True
+            alt_baro = s.get("alt_baro")
+            altitude = alt_baro / 3.28084 if type(alt_baro) in (int, float) else 0
+            
+            gs = s.get("gs")
+            velocity = gs * 0.514444 if type(gs) in (int, float) else 0
+            
+            geom_rate = s.get("geom_rate")
+            vertical_rate = geom_rate * 0.00508 if type(geom_rate) in (int, float) else 0
+            
+            lat = s.get("lat")
+            lon = s.get("lon")
+            if lat is None or lon is None:
+                continue
                 
-            if needs_fetch:
-                # Mark as fetching to prevent concurrent duplicates
-                if meta:
-                    meta["status"] = "fetching"
-                else:
-                    metadata_cache[icao] = {"status": "fetching", "callsign_used": callsign}
-                asyncio.create_task(fetch_metadata(icao, callsign))
-
-            meta = metadata_cache.get(icao, {})
-            
             parsed.append({
                 "icao": icao,
                 "callsign": callsign,
-                "country": s[2],
-                "longitude": s[5],
-                "latitude": s[6],
-                "altitude": s[7],
-                "on_ground": s[8],
-                "velocity": s[9],
-                "true_track": s[10],
-                "vertical_rate": s[11],
-                "squawk": s[14],
-                "registration": meta.get("registration", "N/A"),
-                "manufacturer": meta.get("manufacturer", "N/A"),
-                "model": meta.get("model", "N/A"),
-                "operator": meta.get("operator", "N/A"),
-                "route": meta.get("route", [])
+                "country": "Unknown",
+                "longitude": lon,
+                "latitude": lat,
+                "altitude": altitude,
+                "on_ground": alt_baro == "ground",
+                "velocity": velocity,
+                "true_track": s.get("track", 0),
+                "vertical_rate": vertical_rate,
+                "squawk": s.get("squawk", "N/A"),
+                "registration": registration,
+                "manufacturer": "N/A",
+                "model": model,
+                "operator": "N/A",
+                "route": []
             })
-        except IndexError:
+        except Exception as e:
             continue
     return parsed
-
 trail_cache = {}
 
 async def poll_opensky():
-    auth = (OPENSKY_USERNAME, OPENSKY_PASSWORD) if OPENSKY_USERNAME and OPENSKY_PASSWORD else None
     async with httpx.AsyncClient() as client:
         while True:
             if manager.active_connections:
                 try:
-                    logger.info("Polling OpenSky API...")
-                    response = await client.get(OPENSKY_URL, params=PARAMS, auth=auth, timeout=10.0)
+                    logger.info("Polling ADSB.lol API...")
+                    response = await client.get(OPENSKY_URL, timeout=10.0)
                     if response.status_code == 200:
                         data = response.json()
-                        states = data.get("states", [])
+                        states = data.get("ac", [])
                         parsed_data = parse_states(states)
                         
                         current_icaos = set()
@@ -154,76 +147,24 @@ async def poll_opensky():
                             if icao not in trail_cache:
                                 trail_cache[icao] = []
                             if f["latitude"] and f["longitude"]:
-                                # Avoid duplicating last point if unchanged
                                 if not trail_cache[icao] or trail_cache[icao][-1] != [f["latitude"], f["longitude"]]:
                                     trail_cache[icao].append([f["latitude"], f["longitude"]])
-                                # Keep last 15 points
                                 if len(trail_cache[icao]) > 15:
                                     trail_cache[icao].pop(0)
                             f["trail"] = list(trail_cache[icao])
                         
-                        # Cleanup stale trails
                         stale = [icao for icao in trail_cache if icao not in current_icaos]
                         for icao in stale:
                             del trail_cache[icao]
 
-                        logger.info(f"Found {len(parsed_data)} flights in bounding box.")
+                        logger.info(f"Found {len(parsed_data)} flights in radius.")
                         await manager.broadcast({"type": "flights_update", "data": parsed_data})
                     else:
-                        raise Exception(f"OpenSky API error: {response.status_code}")
+                        raise Exception(f"ADSB.lol API error: {response.status_code}")
                 except Exception as e:
-                    logger.warning("OpenSky blocked connection (AWS IP detected). Falling back to simulated radar data...")
-                    
-                    # Generate realistic simulated flights over Massachusetts
-                    import time
-                    import math
-                    
-                    simulated_flights = []
-                    t = time.time()
-                    
-                    # Create 8 simulated flights circling MA
-                    for i in range(8):
-                        icao = f"SIM00{i}"
-                        speed = 0.005 + (i * 0.001)
-                        radius = 0.2 + (i * 0.05)
-                        center_lat, center_lon = 42.36, -71.05 # Boston
-                        
-                        lat = center_lat + math.sin(t * speed) * radius
-                        lon = center_lon + math.cos(t * speed) * radius
-                        
-                        if icao not in trail_cache:
-                            trail_cache[icao] = []
-                        if not trail_cache[icao] or trail_cache[icao][-1] != [lat, lon]:
-                            trail_cache[icao].append([lat, lon])
-                        if len(trail_cache[icao]) > 15:
-                            trail_cache[icao].pop(0)
-                            
-                        simulated_flights.append({
-                            "icao": icao,
-                            "callsign": f"MOCK{i}00",
-                            "country": "United States",
-                            "longitude": lon,
-                            "latitude": lat,
-                            "altitude": 10000 + (i * 1000),
-                            "on_ground": False,
-                            "velocity": 250 + (i * 10),
-                            "true_track": (t * speed * 180 / math.pi) % 360,
-                            "vertical_rate": 0,
-                            "squawk": "1200",
-                            "registration": f"N{100+i}SIM",
-                            "manufacturer": "Boeing",
-                            "model": "737 MAX",
-                            "operator": "Simulated Airlines",
-                            "route": ["KBOS", "KACK"],
-                            "trail": list(trail_cache[icao])
-                        })
-                        
-                    await manager.broadcast({"type": "flights_update", "data": simulated_flights})
-            else:
-                pass
+                    logger.error(f"Error fetching data: {e}")
             
             await asyncio.sleep(POLL_INTERVAL)
-
 @app.on_event("startup")
 async def startup_event():
     # Start the polling background task
