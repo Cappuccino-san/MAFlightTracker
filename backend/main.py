@@ -3,11 +3,15 @@ import httpx
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from typing import List
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Live Flight Tracker API")
+
+OPENSKY_USERNAME = os.environ.get("OPENSKY_USERNAME")
+OPENSKY_PASSWORD = os.environ.get("OPENSKY_PASSWORD")
 
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 # Bounding box for Massachusetts (including Martha's Vineyard and Nantucket)
@@ -131,12 +135,13 @@ def parse_states(states: List[List]) -> List[dict]:
 trail_cache = {}
 
 async def poll_opensky():
+    auth = (OPENSKY_USERNAME, OPENSKY_PASSWORD) if OPENSKY_USERNAME and OPENSKY_PASSWORD else None
     async with httpx.AsyncClient() as client:
         while True:
             if manager.active_connections:
                 try:
                     logger.info("Polling OpenSky API...")
-                    response = await client.get(OPENSKY_URL, params=PARAMS, timeout=10.0)
+                    response = await client.get(OPENSKY_URL, params=PARAMS, auth=auth, timeout=10.0)
                     if response.status_code == 200:
                         data = response.json()
                         states = data.get("states", [])
